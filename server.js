@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs"); // safer for deployment
 const jwt = require("jsonwebtoken");
 
 const app = express();
@@ -11,7 +11,7 @@ app.use(express.json());
 /* ================== DATABASE ================== */
 mongoose.connect(process.env.MONGO_URL)
   .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
+  .catch(err => console.log("DB Error:", err));
 
 /* ================== TASK SCHEMA ================== */
 const TaskSchema = new mongoose.Schema({
@@ -25,7 +25,7 @@ const Task = mongoose.model("Task", TaskSchema);
 const UserSchema = new mongoose.Schema({
   email: String,
   password: String,
-  role: String // admin or member
+  role: String
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -34,14 +34,14 @@ const User = mongoose.model("User", UserSchema);
 const verifyToken = (req, res, next) => {
   const token = req.headers["authorization"];
 
-  if (!token) return res.json({ message: "No token" });
+  if (!token) return res.status(401).json({ message: "No token" });
 
   try {
-    const decoded = jwt.verify(token, "secret");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch {
-    res.json({ message: "Invalid token" });
+    res.status(401).json({ message: "Invalid token" });
   }
 };
 
@@ -49,65 +49,82 @@ const verifyToken = (req, res, next) => {
 
 // create task (ONLY ADMIN)
 app.post("/task", verifyToken, async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.json({ message: "Only admin allowed" });
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only admin allowed" });
+    }
+
+    const newTask = new Task(req.body);
+    await newTask.save();
+
+    res.json(newTask);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const newTask = new Task(req.body);
-  await newTask.save();
-
-  res.json(newTask);
 });
 
 // get all tasks
 app.get("/tasks", async (req, res) => {
-  const tasks = await Task.find();
-  res.json(tasks);
+  try {
+    const tasks = await Task.find();
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================== AUTH APIs ================== */
 
 // signup
 app.post("/signup", async (req, res) => {
-  const { email, password, role } = req.body;
+  try {
+    const { email, password, role } = req.body;
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  const user = new User({
-    email,
-    password: hashedPassword,
-    role
-  });
+    const user = new User({
+      email,
+      password: hashedPassword,
+      role
+    });
 
-  await user.save();
+    await user.save();
 
-  res.json({ message: "User created" });
+    res.json({ message: "User created" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // login
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-  if (!user) return res.json({ message: "User not found" });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ message: "Wrong password" });
 
-  const isMatch = await bcrypt.compare(password, user.password);
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
 
-  if (!isMatch) return res.json({ message: "Wrong password" });
-
-  const token = jwt.sign(
-    { id: user._id, role: user.role },
-    "secret"
-  );
-
-  res.json({
-    message: "Login successful",
-    token
-  });
+    res.json({
+      message: "Login successful",
+      token
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================== SERVER ================== */
-app.listen(3000, () => {
-  console.log("Server started on port 3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("Server started on port " + PORT);
 });
