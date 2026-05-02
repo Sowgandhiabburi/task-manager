@@ -13,8 +13,7 @@
   <ul id="taskList"></ul>
 
   <script>
-    const API = "task-manager-production-96b5.up.railway.app";
-
+    const API = "https://task-manager-production-96b5.up.railway.app";
     async function loadTasks() {
       const res = await fetch(API + "/api/tasks");
       const data = await res.json();
